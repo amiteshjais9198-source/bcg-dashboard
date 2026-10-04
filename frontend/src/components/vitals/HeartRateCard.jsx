@@ -4,15 +4,17 @@
  * Vital card – Heart Rate (BPM).
  *
  * Props:
- *  value  (number)  – current BPM reading
+ *  value            (number)   – current BPM reading
+ *  sensorConnected  (boolean)  – ESP32 is sending data (chip is live)
+ *  sensorOnChest    (boolean)  – sensor is physically on body (valid readings)
  *
- * Features:
- *  - Pulsing red heart icon animation (CSS: animate-heartbeat)
- *  - Number flash micro-animation on value change via key trick
- *  - Trend indicator badge
+ * Display states:
+ *  sensorOnChest=true  → show live BPM value with zone badge
+ *  sensorConnected, !onChest → show '--', hint "Place sensor on chest"
+ *  !sensorConnected    → show '--', hint "Not Connected"
  */
 import { useRef, useEffect, useState } from 'react'
-import { Heart, TrendingUp } from 'lucide-react'
+import { Heart, TrendingUp, WifiOff, Wifi } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
 // Zone classification based on BPM
@@ -22,27 +24,43 @@ function getZone(bpm) {
   return             { label: 'Normal',   color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/25' }
 }
 
-export default function HeartRateCard({ value }) {
+export default function HeartRateCard({ value, sensorOnChest = false, sensorConnected = false }) {
   const prevRef   = useRef(value)
   const [flashKey, setFlashKey] = useState(0)
 
-  // Trigger flash animation on every value change
+  // Trigger flash animation on every value change (only when on chest)
   useEffect(() => {
-    if (prevRef.current !== value) {
+    if (sensorOnChest && prevRef.current !== value) {
       prevRef.current = value
       setFlashKey(k => k + 1)
     }
-  }, [value])
+  }, [value, sensorOnChest])
 
-  const zone = getZone(value)
+  // Use '--' when sensor is not on chest or value is invalid
+  const displayValue = sensorOnChest && value > 0 ? Math.round(value) : '--'
+  const zone = (sensorOnChest && value > 0) ? getZone(value) : null
+
+  const footerHint = !sensorConnected
+    ? <div className="text-xs text-red-500/70 flex items-center gap-1"><WifiOff size={10} />Not Connected</div>
+    : !sensorOnChest
+      ? <div className="text-xs text-cyan-400/70 flex items-center gap-1"><Wifi size={10} />Place sensor on chest</div>
+      : zone
+        ? <div className={cn('flex items-center gap-1 text-xs font-medium', zone.color)}><TrendingUp size={12} /><span>Steady</span></div>
+        : <div className="text-xs text-zinc-500">--</div>
 
   return (
     <div
       id="card-heart-rate"
-      className="glass-card rounded-2xl p-5 flex flex-col gap-4
-                 animate-fade-slide-in animation-delay-100
-                 hover:border-zinc-600/60 hover:shadow-[0_0_30px_rgba(6,182,212,0.07)]
-                 transition-all duration-200 ease-in-out cursor-default"
+      className={cn(
+        'glass-card rounded-2xl p-5 flex flex-col gap-4',
+        'animate-fade-slide-in animation-delay-100',
+        'transition-all duration-200 ease-in-out cursor-default',
+        sensorOnChest
+          ? 'hover:border-zinc-600/60 hover:shadow-[0_0_30px_rgba(6,182,212,0.07)]'
+          : sensorConnected
+            ? 'hover:border-zinc-600/40 opacity-75'
+            : 'opacity-55 border-zinc-700/30',
+      )}
     >
       {/* Card header */}
       <div className="flex items-center justify-between">
@@ -51,7 +69,7 @@ export default function HeartRateCard({ value }) {
                           bg-red-500/10 border border-red-500/20">
             <Heart
               size={16}
-              className="text-red-400 animate-heartbeat fill-red-400/60"
+              className={cn('text-red-400 fill-red-400/60', sensorOnChest ? 'animate-heartbeat' : '')}
               strokeWidth={0}
             />
           </div>
@@ -61,12 +79,23 @@ export default function HeartRateCard({ value }) {
         </div>
 
         {/* Zone badge */}
-        <span className={cn(
-          'rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide border',
-          zone.color, zone.bg, zone.border
-        )}>
-          {zone.label}
-        </span>
+        {zone ? (
+          <span className={cn(
+            'rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide border',
+            zone.color, zone.bg, zone.border
+          )}>
+            {zone.label}
+          </span>
+        ) : (
+          <span className={cn(
+            'rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide border flex items-center gap-1',
+            !sensorConnected
+              ? 'text-red-500/60 bg-red-500/5 border-red-500/20'
+              : 'text-cyan-400/70 bg-cyan-500/5 border-cyan-500/20',
+          )}>
+            {!sensorConnected ? <><WifiOff size={9} />Offline</> : <><Wifi size={9} />Idle</>}
+          </span>
+        )}
       </div>
 
       {/* BPM value – re-keyed on change to trigger flash */}
@@ -74,10 +103,13 @@ export default function HeartRateCard({ value }) {
         <span
           key={flashKey}
           id="heart-rate-value"
-          className="font-bold text-white animate-number-flash"
+          className={cn(
+            'font-bold animate-number-flash',
+            sensorOnChest && value > 0 ? 'text-white' : 'text-zinc-600',
+          )}
           style={{ fontSize: 'clamp(2.5rem, 4vw, 3.75rem)', lineHeight: 1 }}
         >
-          {value}
+          {displayValue}
         </span>
         <span className="text-zinc-500 text-lg font-medium mb-1.5">BPM</span>
       </div>
@@ -87,10 +119,7 @@ export default function HeartRateCard({ value }) {
         <div className="text-xs text-zinc-500">
           Range: <span className="text-zinc-300">60–100 BPM</span>
         </div>
-        <div className="flex items-center gap-1 text-xs text-emerald-400">
-          <TrendingUp size={12} />
-          <span>Steady</span>
-        </div>
+        {footerHint}
       </div>
     </div>
   )

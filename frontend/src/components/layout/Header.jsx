@@ -2,78 +2,15 @@
  * components/layout/Header.jsx
  *
  * Top header bar.
- * The SensorBadge reads live socket connection status from SocketContext —
- * it shows green/amber/red based on the actual backend connection, not just
- * a static label.
+ * Patient info + digital clock. The sensor status badge is now rendered
+ * inside Dashboard.jsx via SensorStatusBadge component.
  */
-import { useClock }         from '../../hooks/useClock'
-import { useSocketContext } from '../../context/SocketContext'
-import { User }             from 'lucide-react'
-import { cn }               from '../../lib/utils'
+import { useClock } from '../../hooks/useClock'
+import { User }     from 'lucide-react'
 
 // ── Patient constants ────────────────────────────────────────────────────────
 const PATIENT_NAME = 'Amitesh Jaiswal'
 const PATIENT_ID   = 'P-2026'
-
-// ── Status config map ────────────────────────────────────────────────────────
-const STATUS_CONFIG = {
-  connecting:   {
-    dot:   'bg-amber-400',
-    pulse: 'bg-amber-400 animate-sensor-pulse',
-    text:  'Connecting…',
-    ring:  'border-zinc-700/60',
-  },
-  connected:    {
-    dot:   'bg-green-500',
-    pulse: 'bg-green-400 animate-sensor-pulse',
-    text:  'Sensor Connected',
-    ring:  'border-green-500/30',
-  },
-  disconnected: {
-    dot:   'bg-zinc-500',
-    pulse: 'bg-zinc-500',
-    text:  'Disconnected',
-    ring:  'border-zinc-700/60',
-  },
-  error:        {
-    dot:   'bg-red-500',
-    pulse: 'bg-red-400 animate-alert-pulse',
-    text:  'Connection Error',
-    ring:  'border-red-500/30',
-  },
-}
-
-// ── SensorBadge ──────────────────────────────────────────────────────────────
-function SensorBadge() {
-  const { socketStatus } = useSocketContext()
-  const cfg = STATUS_CONFIG[socketStatus] ?? STATUS_CONFIG.connecting
-
-  return (
-    <div
-      id="sensor-status-badge"
-      className={cn(
-        'flex items-center gap-2.5 rounded-full',
-        'bg-zinc-900 border px-4 py-2 text-sm font-medium text-zinc-300',
-        'transition-all duration-500',
-        cfg.ring,
-      )}
-    >
-      {/* Animated dot */}
-      <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
-        <span className={cn(
-          'absolute inline-flex h-full w-full rounded-full transition-colors duration-500',
-          cfg.pulse,
-        )} />
-        <span className={cn(
-          'relative inline-flex rounded-full h-2.5 w-2.5 transition-colors duration-500',
-          cfg.dot,
-        )} />
-      </span>
-
-      <span className="transition-all duration-300">{cfg.text}</span>
-    </div>
-  )
-}
 
 // ── Header ───────────────────────────────────────────────────────────────────
 export default function Header() {
@@ -114,8 +51,8 @@ export default function Header() {
         <span className="text-xs text-zinc-500 mt-0.5 tracking-wide">{date}</span>
       </div>
 
-      {/* Right – Live Sensor Badge */}
-      <SensorBadge />
+      {/* Right spacer — sensor badge is now in Dashboard */}
+      <div className="w-[140px]" />
     </header>
   )
 }

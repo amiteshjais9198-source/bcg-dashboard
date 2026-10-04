@@ -61,7 +61,7 @@ app.use(express.urlencoded({ extended: true, limit: '16kb' }));
 // ── 6. MongoDB Schema & Model ─────────────────────────────────────────────────
 //
 //   Field names are kept exactly in sync with what the React frontend destructures:
-//     { timestamp, heartRate, hrv, amplitude, riskStatus }
+//     { timestamp, heartRate, hrv, amplitude, riskStatus, sensorOnline, status, breathingRate }
 //   DO NOT rename fields here without updating the frontend components too.
 //
 const VitalSchema = new mongoose.Schema(
@@ -97,6 +97,24 @@ const VitalSchema = new mongoose.Schema(
       type:    Number,
       enum:    [0, 1],
       default: 0,
+    },
+
+    // Whether the physical sensor is online / on chest
+    sensorOnline: {
+      type:    Boolean,
+      default: true,
+    },
+
+    // Human-readable status string from ESP32 (e.g. 'sensor seene pe lagao', 'warmup', 'hilo')
+    status: {
+      type:    String,
+      default: '--',
+    },
+
+    // Estimated breathing rate in breaths/min (derived from respPeak on ESP32)
+    breathingRate: {
+      type:    Number,
+      default: null,
     },
   },
   {
@@ -145,7 +163,21 @@ app.get('/api/health', (_req, res) => {
 //
 app.post('/api/vitals', async (req, res) => {
   try {
-    const { heartRate, hrv, amplitude, riskStatus } = req.body;
+    const { heartRate, hrv, amplitude, riskStatus, sensorOnline, status, breathingRate } = req.body;
+
+    // ── Sensor offline / no-chest detection ───────────────────────────────
+    //   Bridge sends sensorOnline:false OR riskStatus:-1 when sensor is off chest,
+    //   in motion, or warming up. In that case we emit 'sensor_offline' but do
+    //   NOT save to MongoDB so the history table stays clean.
+    if (sensorOnline === false || riskStatus === -1) {
+      const offlinePayload = {
+        status:    status || 'sensor offline',
+        timestamp: new Date().toISOString(),
+      };
+      io.emit('sensor_offline', offlinePayload);
+      console.warn(`[POST /api/vitals] ⚠ Sensor offline — status: "${offlinePayload.status}"`);
+      return res.status(201).json({ ok: true, offline: true });
+    }
 
     // ── Basic validation ───────────────────────────────────────────────────
     if (heartRate === undefined || hrv === undefined || amplitude === undefined) {
@@ -157,20 +189,24 @@ app.post('/api/vitals', async (req, res) => {
     // ── Graceful Fallback if MongoDB is offline ────────────────────────────
     if (useMock) {
       const vitalObj = {
-        _id: 'mock_' + mockIdCounter++,
+        _id:           'mock_' + mockIdCounter++,
         heartRate,
         hrv,
         amplitude,
-        riskStatus: riskStatus ?? 0,
-        timestamp: new Date().toISOString(),
+        riskStatus:    riskStatus ?? 0,
+        sensorOnline:  true,
+        status:        status || '--',
+        breathingRate: breathingRate ?? null,
+        timestamp:     new Date().toISOString(),
       };
-      
-      mockHistory.unshift(vitalObj);
-      if (mockHistory.length > 50) mockHistory.pop(); // keep array reasonably sized
 
+      mockHistory.unshift(vitalObj);
+      if (mockHistory.length > 50) mockHistory.pop();
+
+      _lastVitalTime = Date.now();
       res.status(201).json({ ok: true, id: vitalObj._id, mock: true });
       io.emit('new_vitals', vitalObj);
-      console.log(`[MOCK POST /vitals] HR: ${heartRate} | HRV: ${hrv} | Amp: ${amplitude}g | Risk: ${riskStatus ?? 0}`);
+      console.log(`[MOCK POST /vitals] HR: ${heartRate} | HRV: ${hrv} | Amp: ${amplitude}g | Risk: ${riskStatus ?? 0} | Breath: ${breathingRate ?? '--'}`);
       return;
     }
 
@@ -179,14 +215,18 @@ app.post('/api/vitals', async (req, res) => {
       heartRate,
       hrv,
       amplitude,
-      riskStatus: riskStatus ?? 0,
+      riskStatus:    riskStatus ?? 0,
+      sensorOnline:  true,
+      status:        status || '--',
+      breathingRate: breathingRate ?? null,
     }).save();
 
+    _lastVitalTime = Date.now();
     res.status(201).json({ ok: true, id: vital._id });
     io.emit('new_vitals', vital.toObject());
 
     console.log(
-      `[POST /api/vitals] HR: ${heartRate} bpm | HRV: ${hrv} ms | Amp: ${amplitude}g | Risk: ${riskStatus ?? 0}`
+      `[POST /api/vitals] HR: ${heartRate} bpm | HRV: ${hrv} ms | Amp: ${amplitude}g | Risk: ${riskStatus ?? 0} | Breath: ${breathingRate ?? '--'}`
     );
 
   } catch (err) {
@@ -261,7 +301,22 @@ async function start() {
 
 start();
 
-// ── 10. Graceful shutdown ──────────────────────────────────────────────────────
+// ── 10. Watchdog timer — fires sensor_offline if no data arrives for 5 s ──────
+//   Prevents the frontend from showing stale data when the Python bridge drops.
+let _lastVitalTime = null;
+
+setInterval(() => {
+  if (_lastVitalTime && Date.now() - _lastVitalTime > 5000) {
+    io.emit('sensor_offline', {
+      status:    'no data (5s timeout)',
+      timestamp: new Date().toISOString(),
+    });
+    console.warn('[Watchdog] No vitals received for >5 s — emitting sensor_offline');
+    _lastVitalTime = null; // reset so we don't spam the event every 2 s
+  }
+}, 2000);
+
+// ── 11. Graceful shutdown ──────────────────────────────────────────────────────
 //   Ensures in-flight requests finish and MongoDB is cleanly closed on SIGTERM
 //   (e.g. when Docker stops the container or PM2 restarts the process).
 async function shutdown(signal) {
